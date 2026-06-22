@@ -12,6 +12,7 @@
         header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: var(--surface); position: sticky; top: 0; z-index: 100; }
         .logo { color: var(--accent); font-weight: bold; font-size: 24px; cursor: pointer; }
         .nav-actions button { background: transparent; color: var(--text); border: 1px solid var(--subtext); padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-left: 10px; }
+        .nav-actions button:hover { background: #333; }
         .container { display: flex; }
         .sidebar { width: 240px; padding: 20px; height: calc(100vh - 60px); position: fixed; }
         .sidebar div { padding: 10px; cursor: pointer; border-radius: 10px; margin-bottom: 5px; }
@@ -83,7 +84,8 @@
     </div>
 
     <script>
-       const API_URL = window.location.origin + '/api';
+        // FIXED: Automatically uses the live cloud URL or local URL
+        const API_URL = window.location.origin + '/api';
         let accessToken = localStorage.getItem('vaultrix_access');
         let isRegisterMode = false;
         let currentView = 'feed';
@@ -148,6 +150,29 @@
             } catch (e) { main.innerHTML = `<h2>Error: ${e.message}</h2>`; }
         }
 
+        // SMART FEATURE: Silent Background Updater
+        setInterval(async () => {
+            if (currentView === 'feed') {
+                try {
+                    const res = await apiCall('/v1/feed?limit=50', 'GET');
+                    const grid = document.getElementById('feedGrid');
+                    if (grid && res.videos.length > 0) {
+                        grid.innerHTML = '';
+                        res.videos.forEach(v => {
+                            grid.innerHTML += `
+                                <div class="video-card" onclick="watchVideo('${v.id}')">
+                                    <img src="${v.thumbnail_url}" class="thumbnail">
+                                    <div class="video-info">
+                                        <div class="avatar">V</div>
+                                        <div><h3>${sanitize(v.title)}</h3><p>${v.views} views</p></div>
+                                    </div>
+                                </div>`;
+                        });
+                    }
+                } catch (e) { console.error("Background update failed", e); }
+            }
+        }, 30000);
+
         async function watchVideo(id) {
             currentView = 'watch';
             const main = document.getElementById('mainContent');
@@ -208,6 +233,25 @@
             document.getElementById('uploadModal').style.display = 'flex';
         }
 
+        // THE "NEVER FAIL" RETRY SYSTEM
+        async function fetchWithRetry(url, options, retries = 3) {
+            try {
+                const res = await fetch(url, options);
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `Server responded ${res.status}`);
+                }
+                return res;
+            } catch (error) {
+                if (retries > 0) {
+                    console.log(`Network drop detected. Retrying in 2s... (${retries} attempts left)`);
+                    await new Promise(r => setTimeout(r, 2000));
+                    return fetchWithRetry(url, options, retries - 1);
+                }
+                throw error;
+            }
+        }
+
         async function handleUpload() {
             const title = document.getElementById('upTitle').value;
             const desc = document.getElementById('upDesc').value;
@@ -219,30 +263,43 @@
             uploadBtn.innerText = "Uploading to Cloud..."; uploadBtn.disabled = true;
 
             try {
-                // 1. Get Signature from Backend
-                const signRes = await apiCall('/upload/init', 'POST');
+                // 1. Get Signature from Backend (With Auto-Retry)
+                const signRes = await fetchWithRetry(`${API_URL}/upload/init`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }
+                }).then(r => r.json());
                 
-                // 2. Upload Directly to Cloudinary (Bypasses your PC entirely!)
+                // 2. Upload Directly to Cloudinary (With Auto-Retry)
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('api_key', signRes.apiKey);
                 formData.append('timestamp', signRes.timestamp);
                 formData.append('signature', signRes.signature);
-                formData.append('resource_type', 'video');
 
-                const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${signRes.cloudName}/video/upload`, {
+                const cloudRes = await fetchWithRetry(`https://api.cloudinary.com/v1_1/${signRes.cloudName}/video/upload`, {
                     method: 'POST', body: formData
                 });
                 const cloudData = await cloudRes.json();
                 
-                // 3. Tell Backend to save it to Supabase
-                await apiCall('/upload/complete', 'POST', { cloudinaryId: cloudData.public_id, title, description: desc });
+                if (cloudData.error) throw new Error(cloudData.error.message);
+                if (!cloudData.public_id) throw new Error("Cloudinary did not return a video ID.");
+                
+                // 3. Tell Backend to save it to Supabase (With Auto-Retry)
+                await fetchWithRetry(`${API_URL}/upload/complete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                    body: JSON.stringify({ cloudinaryId: cloudData.public_id, title, description: desc })
+                });
                 
                 alert('Upload successful!');
                 document.getElementById('uploadModal').style.display = 'none';
+                document.getElementById('upTitle').value = '';
+                document.getElementById('upDesc').value = '';
+                document.getElementById('upFile').value = '';
+                progressBar.style.width = '0%';
                 loadFeed();
             } catch (e) {
-                alert('Upload failed: ' + e.message);
+                alert('Upload failed after multiple retries: ' + e.message);
             } finally {
                 uploadBtn.innerText = "Upload to Cloud"; uploadBtn.disabled = false;
             }
