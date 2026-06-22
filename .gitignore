@@ -1,0 +1,8 @@
+node_modules
+.env
+vaultrix_core.db
+uploads
+streams
+thumbnails
+queue
+package-lock.json

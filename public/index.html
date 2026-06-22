@@ -1,0 +1,254 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vaultrix</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        :root { --bg: #0F0F0F; --surface: #212121; --text: #FFFFFF; --subtext: #AAAAAA; --accent: #FF0000; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Roboto', sans-serif; }
+        body { background: var(--bg); color: var(--text); }
+        header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: var(--surface); position: sticky; top: 0; z-index: 100; }
+        .logo { color: var(--accent); font-weight: bold; font-size: 24px; cursor: pointer; }
+        .nav-actions button { background: transparent; color: var(--text); border: 1px solid var(--subtext); padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-left: 10px; }
+        .container { display: flex; }
+        .sidebar { width: 240px; padding: 20px; height: calc(100vh - 60px); position: fixed; }
+        .sidebar div { padding: 10px; cursor: pointer; border-radius: 10px; margin-bottom: 5px; }
+        .sidebar div:hover { background: var(--surface); }
+        .main-content { margin-left: 240px; padding: 20px; width: calc(100% - 240px); }
+        .feed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .video-card { cursor: pointer; transition: transform 0.2s; }
+        .video-card:hover { transform: scale(1.02); }
+        .thumbnail { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; object-fit: cover; }
+        .video-info { display: flex; margin-top: 10px; }
+        .video-info div h3 { font-size: 16px; margin-bottom: 5px; }
+        .video-info div p { color: var(--subtext); font-size: 14px; }
+        .watch-container { display: flex; gap: 20px; }
+        .player-section { flex: 2; }
+        .video-player { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; }
+        .watch-info h1 { font-size: 20px; margin: 15px 0; }
+        .watch-meta { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #333; }
+        .actions button { background: var(--surface); color: var(--text); border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; margin-left: 10px; }
+        .comments-section { margin-top: 20px; }
+        .comment-input { display: flex; gap: 15px; margin-bottom: 30px; }
+        .comment-input input { flex: 1; background: transparent; border: none; border-bottom: 1px solid #333; color: var(--text); font-size: 16px; outline: none; padding: 5px; }
+        .comment-card { display: flex; gap: 15px; margin-bottom: 20px; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; background: #333; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 200; justify-content: center; align-items: center; }
+        .modal-content { background: var(--surface); padding: 30px; border-radius: 12px; width: 500px; }
+        .modal-content input, .modal-content textarea { width: 100%; background: var(--bg); border: 1px solid #444; color: var(--text); padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+        .modal-content button { width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        .progress-bar { width: 100%; height: 5px; background: #333; margin: 10px 0; border-radius: 5px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+        .back-btn { background: transparent; border: 1px solid #333; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-bottom: 15px; display: inline-block; }
+        .switch-text { color: var(--subtext); text-align: center; margin-top: 15px; cursor: pointer; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo" onclick="loadFeed()">VAULTRIX</div>
+        <div class="nav-actions">
+            <button onclick="openUploadModal()">Upload</button>
+            <button id="authBtn" onclick="openAuthModal()">Login</button>
+        </div>
+    </header>
+    <div class="container">
+        <div class="sidebar">
+            <div onclick="loadFeed()">Home</div>
+        </div>
+        <div class="main-content" id="mainContent"></div>
+    </div>
+
+    <div class="modal" id="authModal">
+        <div class="modal-content">
+            <h2 id="authTitle" style="margin-bottom: 20px;">Login</h2>
+            <input type="email" id="authEmail" placeholder="Strictly Gmail Address">
+            <input type="password" id="authPass" placeholder="Password (Min 8 chars)">
+            <button onclick="handleAuth()">Submit</button>
+            <p id="authError" style="color: var(--accent); margin-top: 10px; text-align: center;"></p>
+            <p id="authSwitch" class="switch-text" onclick="toggleAuthMode()">Don't have an account? Register</p>
+        </div>
+    </div>
+
+    <div class="modal" id="uploadModal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 20px;">Upload Video</h2>
+            <input type="text" id="upTitle" placeholder="Video Title">
+            <textarea id="upDesc" placeholder="Description"></textarea>
+            <input type="file" id="upFile" accept="video/*">
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <button id="uploadBtn" onclick="handleUpload()">Upload to Cloud</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api';
+        let accessToken = localStorage.getItem('vaultrix_access');
+        let isRegisterMode = false;
+        let currentView = 'feed';
+
+        if (accessToken) document.getElementById('authBtn').innerText = 'Logout';
+
+        function sanitize(str) { const temp = document.createElement('div'); temp.textContent = str; return temp.innerHTML; }
+
+        async function apiCall(endpoint, method, body) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+            const res = await fetch(`${API_URL}${endpoint}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Server Error");
+            return data;
+        }
+
+        function openAuthModal() {
+            if (accessToken) {
+                localStorage.removeItem('vaultrix_access'); accessToken = null;
+                document.getElementById('authBtn').innerText = 'Login'; alert('Logged out'); return;
+            }
+            document.getElementById('authModal').style.display = 'flex';
+        }
+
+        function toggleAuthMode() {
+            isRegisterMode = !isRegisterMode;
+            document.getElementById('authTitle').innerText = isRegisterMode ? 'Register' : 'Login';
+            document.getElementById('authSwitch').innerText = isRegisterMode ? 'Already have an account? Login' : "Don't have an account? Register";
+        }
+
+        async function handleAuth() {
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPass').value;
+            try {
+                if (isRegisterMode) await apiCall('/v1/auth/register', 'POST', { email, password });
+                const res = await apiCall('/v1/auth/login', 'POST', { email, password });
+                accessToken = res.accessToken; localStorage.setItem('vaultrix_access', accessToken);
+                document.getElementById('authModal').style.display = 'none';
+                document.getElementById('authBtn').innerText = 'Logout'; loadFeed();
+            } catch (e) { document.getElementById('authError').innerText = e.message; }
+        }
+
+        async function loadFeed() {
+            currentView = 'feed';
+            const main = document.getElementById('mainContent');
+            main.innerHTML = `<div class="feed-grid" id="feedGrid"></div>`;
+            try {
+                const res = await apiCall('/v1/feed?limit=50', 'GET');
+                const grid = document.getElementById('feedGrid');
+                if (res.videos.length === 0) { grid.innerHTML = '<h2>No videos yet.</h2>'; return; }
+                res.videos.forEach(v => {
+                    grid.innerHTML += `
+                        <div class="video-card" onclick="watchVideo('${v.id}')">
+                            <img src="${v.thumbnail_url}" class="thumbnail">
+                            <div class="video-info">
+                                <div class="avatar">V</div>
+                                <div><h3>${sanitize(v.title)}</h3><p>${v.views} views</p></div>
+                            </div>
+                        </div>`;
+                });
+            } catch (e) { main.innerHTML = `<h2>Error: ${e.message}</h2>`; }
+        }
+
+        async function watchVideo(id) {
+            currentView = 'watch';
+            const main = document.getElementById('mainContent');
+            main.innerHTML = `Loading...`;
+            try {
+                const v = await apiCall(`/v1/videos/${id}`, 'GET');
+                main.innerHTML = `
+                    <div class="watch-container"><div class="player-section">
+                        <button class="back-btn" onclick="loadFeed()">← Back</button>
+                        <video id="player" class="video-player" controls autoplay></video>
+                        <div class="watch-info">
+                            <h1>${sanitize(v.title)}</h1>
+                            <div class="watch-meta">
+                                <span>${v.views} views</span>
+                                <div class="actions"><button>👍 ${v.likes}</button><button>👎 ${v.dislikes}</button></div>
+                            </div>
+                            <p style="margin-top: 15px; color: #ccc;">${sanitize(v.description) || "No description"}</p>
+                        </div>
+                        <div class="comments-section">
+                            <h3>${v.comment_count} Comments</h3>
+                            <div class="comment-input"><div class="avatar">U</div><input type="text" id="commentInput" placeholder="Add a comment..."><button onclick="postComment('${id}')">COMMENT</button></div>
+                            <div id="commentsList"></div>
+                        </div>
+                    </div></div>`;
+                
+                const video = document.getElementById('player');
+                const hls = new Hls();
+                hls.loadSource(v.hls_url); hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+                
+                loadComments(id);
+            } catch (e) { main.innerHTML = `<h2>Failed: ${e.message}</h2>`; }
+        }
+
+        async function loadComments(id) {
+            try {
+                const res = await apiCall(`/v1/videos/${id}/comments`, 'GET');
+                const list = document.getElementById('commentsList');
+                list.innerHTML = '';
+                res.comments.forEach(c => {
+                    list.innerHTML += `<div class="comment-card"><div class="avatar">U</div><div><strong>User</strong><br>${sanitize(c.text)}</div></div>`;
+                });
+            } catch (e) {}
+        }
+
+        async function postComment(id) {
+            if (!accessToken) return alert('Login to comment');
+            const input = document.getElementById('commentInput');
+            if (!input.value.trim()) return;
+            try {
+                await apiCall(`/v1/videos/${id}/comments`, 'POST', { text: input.value });
+                input.value = ''; loadComments(id);
+            } catch (e) { alert(e.message); }
+        }
+
+        function openUploadModal() {
+            if (!accessToken) return alert('Login to upload');
+            document.getElementById('uploadModal').style.display = 'flex';
+        }
+
+        async function handleUpload() {
+            const title = document.getElementById('upTitle').value;
+            const desc = document.getElementById('upDesc').value;
+            const file = document.getElementById('upFile').files[0];
+            if (!title || !file) return alert('Title and file required');
+
+            const progressBar = document.getElementById('progressFill');
+            const uploadBtn = document.getElementById('uploadBtn');
+            uploadBtn.innerText = "Uploading to Cloud..."; uploadBtn.disabled = true;
+
+            try {
+                // 1. Get Signature from Backend
+                const signRes = await apiCall('/upload/init', 'POST');
+                
+                // 2. Upload Directly to Cloudinary (Bypasses your PC entirely!)
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('api_key', signRes.apiKey);
+                formData.append('timestamp', signRes.timestamp);
+                formData.append('signature', signRes.signature);
+                formData.append('resource_type', 'video');
+
+                const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${signRes.cloudName}/video/upload`, {
+                    method: 'POST', body: formData
+                });
+                const cloudData = await cloudRes.json();
+                
+                // 3. Tell Backend to save it to Supabase
+                await apiCall('/upload/complete', 'POST', { cloudinaryId: cloudData.public_id, title, description: desc });
+                
+                alert('Upload successful!');
+                document.getElementById('uploadModal').style.display = 'none';
+                loadFeed();
+            } catch (e) {
+                alert('Upload failed: ' + e.message);
+            } finally {
+                uploadBtn.innerText = "Upload to Cloud"; uploadBtn.disabled = false;
+            }
+        }
+
+        loadFeed();
+    </script>
+</body>
+</html>
