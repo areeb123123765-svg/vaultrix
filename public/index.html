@@ -46,6 +46,9 @@
         .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
         .back-btn { background: transparent; border: 1px solid #333; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-bottom: 15px; display: inline-block; }
         .switch-text { color: var(--subtext); text-align: center; margin-top: 15px; cursor: pointer; text-decoration: underline; }
+        
+        /* YouTube Style Loading Spinner */
+        .vjs-loading-spinner { border-color: var(--accent); }
     </style>
 </head>
 <body>
@@ -182,7 +185,26 @@
                     </div></div>`;
                 
                 if (videojsPlayer) videojsPlayer.dispose();
-                videojsPlayer = videojs('player', { html5: { vhs: { overrideNative: true } } });
+                
+                // PROFESSIONAL DEEP BUFFER ENGINE (YouTube Architecture)
+                videojsPlayer = videojs('player', {
+                    html5: {
+                        vhs: {
+                            overrideNative: true,
+                            enableLowInitialPlaylist: true, // Starts on 240p instantly
+                            maxPlaylistRetries: 5,
+                            // THE DEEP BUFFER FIX: Aggressively downloads 5 minutes (300s) ahead.
+                            // Prevents buffering even if Wi-Fi drops for 5 minutes.
+                            bufferLowWaterLine: 30,       // 30 seconds before it starts fetching
+                            bufferHighWaterLine: 300,     // Fetches 5 minutes ahead constantly
+                            cacheEncryptionKeys: true
+                        }
+                    },
+                    preload: 'auto',
+                    fluid: true,
+                    playbackRates: [0.5, 1, 1.25, 1.5, 2] // YouTube Speed Controls
+                });
+                
                 videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
                 videojsPlayer.hlsQualitySelector();
                 videojsPlayer.play();
