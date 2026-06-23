@@ -203,7 +203,7 @@
                 html5: {
                     vhs: {
                         overrideNative: true,
-                        enableLowInitialPlaylist: false, // Don't start on 240p
+                        enableLowInitialPlaylist: true, // Starts fast, upgrades seamlessly
                         maxPlaylistRetries: 5,
                         cacheEncryptionKeys: true,
                         bufferLowWaterLine: 15,        // Starts playing almost instantly
@@ -217,12 +217,22 @@
             
             videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
             
-            // FORCE HIGHEST QUALITY WITHOUT BREAKING THE LOADER
+            // OFFICIAL API: Force Highest Quality without breaking the download engine
             videojsPlayer.on('loadedmetadata', function() {
-                // Trick the player into thinking the user has 100 Gbps internet
-                // This forces it to select 1080p, but keeps the download engine alive
-                videojsPlayer.tech().vhs.playlistController_.masterPlaylistController_.fastQualityChange_ = ()=>{};
-                videojsPlayer.tech().vhs.systemBandwidth = 1000000000; 
+                const qualityLevels = videojsPlayer.qualityLevels();
+                let highestBitrate = 0;
+                
+                // Find the highest quality track (1080p)
+                for (let i = 0; i < qualityLevels.length; i++) {
+                    if (qualityLevels[i].bitrate > highestBitrate) {
+                        highestBitrate = qualityLevels[i].bitrate;
+                    }
+                }
+                
+                // Disable all lower qualities so the engine only downloads 1080p
+                for (let i = 0; i < qualityLevels.length; i++) {
+                    qualityLevels[i].enabled = (qualityLevels[i].bitrate === highestBitrate);
+                }
             });
 
             videojsPlayer.hlsQualitySelector();
