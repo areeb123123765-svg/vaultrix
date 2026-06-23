@@ -198,12 +198,12 @@
             
             if (videojsPlayer) videojsPlayer.dispose();
             
-            // CONTINUOUS 5-MINUTE BUFFER ENGINE
+            // CONTINUOUS 5-MINUTE BUFFER ENGINE (Fixed: No manual quality lock)
             videojsPlayer = videojs('player', {
                 html5: {
                     vhs: {
                         overrideNative: true,
-                        enableLowInitialPlaylist: true, // Starts fast, upgrades seamlessly
+                        enableLowInitialPlaylist: true, // Starts fast
                         maxPlaylistRetries: 5,
                         cacheEncryptionKeys: true,
                         bufferLowWaterLine: 15,        // Starts playing almost instantly
@@ -217,24 +217,7 @@
             
             videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
             
-            // OFFICIAL API: Force Highest Quality without breaking the download engine
-            videojsPlayer.on('loadedmetadata', function() {
-                const qualityLevels = videojsPlayer.qualityLevels();
-                let highestBitrate = 0;
-                
-                // Find the highest quality track (1080p)
-                for (let i = 0; i < qualityLevels.length; i++) {
-                    if (qualityLevels[i].bitrate > highestBitrate) {
-                        highestBitrate = qualityLevels[i].bitrate;
-                    }
-                }
-                
-                // Disable all lower qualities so the engine only downloads 1080p
-                for (let i = 0; i < qualityLevels.length; i++) {
-                    qualityLevels[i].enabled = (qualityLevels[i].bitrate === highestBitrate);
-                }
-            });
-
+            // Let the engine handle quality natively to prevent download stalling.
             videojsPlayer.hlsQualitySelector();
             videojsPlayer.play();
             
