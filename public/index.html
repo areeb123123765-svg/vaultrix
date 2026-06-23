@@ -90,7 +90,7 @@
         let isRegisterMode = false;
         let currentView = 'feed';
         let videojsPlayer = null;
-        const videoCache = new Map(); // HOVER PRELOAD CACHE
+        let feedCache = []; 
 
         if (accessToken) document.getElementById('authBtn').innerText = 'Logout';
 
@@ -137,11 +137,12 @@
             main.innerHTML = `<div class="feed-grid" id="feedGrid"></div>`;
             try {
                 const res = await apiCall('/v1/feed?limit=50', 'GET');
+                feedCache = res.videos; 
                 const grid = document.getElementById('feedGrid');
                 if (res.videos.length === 0) { grid.innerHTML = '<h2>No videos yet.</h2>'; return; }
                 res.videos.forEach(v => {
                     grid.innerHTML += `
-                        <div class="video-card" onmouseover="preloadVideo('${v.id}')" onclick="watchVideo('${v.id}')">
+                        <div class="video-card" onmouseover="preloadVideo('${v.hls_url}')" onclick="watchVideo('${v.id}')">
                             <img src="${v.thumbnail_url}" class="thumbnail">
                             <div class="video-info">
                                 <div class="avatar">V</div>
@@ -152,72 +153,82 @@
             } catch (e) { main.innerHTML = `<h2>Error: ${e.message}</h2>`; }
         }
 
-        // YOUTUBE SECRET: Hover Preload. Fetches video data before user even clicks.
-        async function preloadVideo(id) {
-            if (videoCache.has(id)) return;
-            try {
-                const res = await apiCall(`/v1/videos/${id}`, 'GET');
-                videoCache.set(id, res);
-            } catch (e) {}
+        function preloadVideo(url) {
+            if (document.getElementById('preload-' + url)) return;
+            const link = document.createElement('link');
+            link.rel = 'preload';
+            link.href = url;
+            link.as = 'fetch';
+            link.crossOrigin = 'anonymous';
+            link.id = 'preload-' + url;
+            document.head.appendChild(link);
         }
 
         async function watchVideo(id) {
             currentView = 'watch';
             const main = document.getElementById('mainContent');
-            main.innerHTML = `Loading video...`;
-            try {
-                // Use cached data if available for instant load, otherwise fetch
-                const v = videoCache.has(id) ? videoCache.get(id) : await apiCall(`/v1/videos/${id}`, 'GET');
-                videoCache.delete(id); // clear memory
-                
-                main.innerHTML = `
-                    <div class="watch-container"><div class="player-section">
-                        <button class="back-btn" onclick="loadFeed()">← Back</button>
-                        <video id="player" class="video-js vjs-big-play-centered vjs-fluid" controls preload="auto" playsinline></video>
-                        <div class="watch-info">
-                            <h1>${sanitize(v.title)}</h1>
-                            <div class="watch-meta">
-                                <span>${v.views} views</span>
-                                <div class="actions">
-                                    <button id="likeBtn" onclick="toggleLike('${id}', 'like')">👍 ${v.likes}</button>
-                                    <button id="dislikeBtn" onclick="toggleLike('${id}', 'dislike')">👎 ${v.dislikes}</button>
-                                </div>
+            
+            const v = feedCache.find(x => x.id === id);
+            if (!v) { main.innerHTML = `<h2>Video not found. Please go back.</h2>`; return; }
+
+            main.innerHTML = `
+                <div class="watch-container"><div class="player-section">
+                    <button class="back-btn" onclick="loadFeed()">← Back</button>
+                    <video id="player" class="video-js vjs-big-play-centered vjs-fluid" controls preload="auto" playsinline></video>
+                    <div class="watch-info">
+                        <h1>${sanitize(v.title)}</h1>
+                        <div class="watch-meta">
+                            <span>${v.views} views</span>
+                            <div class="actions">
+                                <button id="likeBtn" onclick="toggleLike('${id}', 'like')">👍 ${v.likes}</button>
+                                <button id="dislikeBtn" onclick="toggleLike('${id}', 'dislike')">👎 ${v.dislikes}</button>
                             </div>
-                            <p style="margin-top: 15px; color: #ccc;">${sanitize(v.description) || "No description"}</p>
                         </div>
-                        <div class="comments-section">
-                            <h3 id="commentCount">${v.comment_count} Comments</h3>
-                            <div class="comment-input">
-                                <input type="text" id="commentInput" placeholder="Add a comment (Max 500)..." maxlength="500">
-                                <button onclick="postComment('${id}')" style="width: 100px; align-self: flex-end;">COMMENT</button>
-                            </div>
-                            <div id="commentsList"></div>
+                        <p style="margin-top: 15px; color: #ccc;">${sanitize(v.description) || "No description"}</p>
+                    </div>
+                    <div class="comments-section">
+                        <h3 id="commentCount">${v.comment_count} Comments</h3>
+                        <div class="comment-input">
+                            <input type="text" id="commentInput" placeholder="Add a comment (Max 500)..." maxlength="500">
+                            <button onclick="postComment('${id}')" style="width: 100px; align-self: flex-end;">COMMENT</button>
                         </div>
-                    </div></div>`;
-                
-                if (videojsPlayer) videojsPlayer.dispose();
-                
-                // HYPER-FAST INSTANT PLAY ENGINE
-                videojsPlayer = videojs('player', {
-                    html5: {
-                        vhs: {
-                            overrideNative: true,
-                            // Removed enableLowInitialPlaylist to force direct first chunk fetch
-                            maxPlaylistRetries: 3,
-                            cacheEncryptionKeys: true
-                        }
-                    },
-                    preload: 'auto',
-                    fluid: true,
-                    playbackRates: [0.5, 1, 1.25, 1.5, 2]
-                });
-                
-                videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
-                videojsPlayer.hlsQualitySelector();
-                videojsPlayer.play();
-                
-                loadComments(id);
-            } catch (e) { main.innerHTML = `<h2>Failed: ${e.message}</h2>`; }
+                        <div id="commentsList"></div>
+                    </div>
+                </div></div>`;
+            
+            if (videojsPlayer) videojsPlayer.dispose();
+            
+            // CONTINUOUS 5-MINUTE BUFFER ENGINE
+            videojsPlayer = videojs('player', {
+                html5: {
+                    vhs: {
+                        overrideNative: true,
+                        enableLowInitialPlaylist: false, // Don't start on 240p
+                        maxPlaylistRetries: 5,
+                        cacheEncryptionKeys: true,
+                        bufferLowWaterLine: 15,        // Starts playing almost instantly
+                        bufferHighWaterLine: 300       // Constantly downloads 5 minutes ahead
+                    }
+                },
+                preload: 'auto',
+                fluid: true,
+                playbackRates: [0.5, 1, 1.25, 1.5, 2]
+            });
+            
+            videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
+            
+            // FORCE HIGHEST QUALITY WITHOUT BREAKING THE LOADER
+            videojsPlayer.on('loadedmetadata', function() {
+                // Trick the player into thinking the user has 100 Gbps internet
+                // This forces it to select 1080p, but keeps the download engine alive
+                videojsPlayer.tech().vhs.playlistController_.masterPlaylistController_.fastQualityChange_ = ()=>{};
+                videojsPlayer.tech().vhs.systemBandwidth = 1000000000; 
+            });
+
+            videojsPlayer.hlsQualitySelector();
+            videojsPlayer.play();
+            
+            loadComments(id);
         }
 
         async function loadComments(id) {
