@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vaultrix</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-quality-levels@2.2.1/dist/videojs-contrib-quality-levels.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/videojs-hls-quality-selector@1.1.4/dist/videojs-hls-quality-selector.min.js"></script>
     <style>
         :root { --bg: #0F0F0F; --surface: #212121; --text: #FFFFFF; --subtext: #AAAAAA; --accent: #FF0000; }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Roboto', sans-serif; }
@@ -12,7 +15,6 @@
         header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: var(--surface); position: sticky; top: 0; z-index: 100; }
         .logo { color: var(--accent); font-weight: bold; font-size: 24px; cursor: pointer; }
         .nav-actions button { background: transparent; color: var(--text); border: 1px solid var(--subtext); padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-left: 10px; }
-        .nav-actions button:hover { background: #333; }
         .container { display: flex; }
         .sidebar { width: 240px; padding: 20px; height: calc(100vh - 60px); position: fixed; }
         .sidebar div { padding: 10px; cursor: pointer; border-radius: 10px; margin-bottom: 5px; }
@@ -32,9 +34,9 @@
         .watch-meta { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #333; }
         .actions button { background: var(--surface); color: var(--text); border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; margin-left: 10px; }
         .comments-section { margin-top: 20px; }
-        .comment-input { display: flex; gap: 15px; margin-bottom: 30px; }
-        .comment-input input { flex: 1; background: transparent; border: none; border-bottom: 1px solid #333; color: var(--text); font-size: 16px; outline: none; padding: 5px; }
-        .comment-card { display: flex; gap: 15px; margin-bottom: 20px; }
+        .comment-input { display: flex; gap: 15px; margin-bottom: 30px; flex-direction: column; }
+        .comment-input input { width: 100%; background: transparent; border: 1px solid #444; color: var(--text); font-size: 16px; outline: none; padding: 10px; border-radius: 5px; }
+        .comment-card { display: flex; gap: 15px; margin-bottom: 20px; padding: 10px; background: var(--surface); border-radius: 8px; }
         .avatar { width: 40px; height: 40px; border-radius: 50%; background: #333; display: flex; align-items: center; justify-content: center; font-weight: bold; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 200; justify-content: center; align-items: center; }
         .modal-content { background: var(--surface); padding: 30px; border-radius: 12px; width: 500px; }
@@ -55,9 +57,7 @@
         </div>
     </header>
     <div class="container">
-        <div class="sidebar">
-            <div onclick="loadFeed()">Home</div>
-        </div>
+        <div class="sidebar"><div onclick="loadFeed()">Home</div></div>
         <div class="main-content" id="mainContent"></div>
     </div>
 
@@ -65,7 +65,7 @@
         <div class="modal-content">
             <h2 id="authTitle" style="margin-bottom: 20px;">Login</h2>
             <input type="email" id="authEmail" placeholder="Strictly Gmail Address">
-            <input type="password" id="authPass" placeholder="Password (Min 8 chars)">
+            <input type="password" id="authPass" placeholder="Password (Min 8, Upper, Lower, Number, Symbol)">
             <button onclick="handleAuth()">Submit</button>
             <p id="authError" style="color: var(--accent); margin-top: 10px; text-align: center;"></p>
             <p id="authSwitch" class="switch-text" onclick="toggleAuthMode()">Don't have an account? Register</p>
@@ -75,8 +75,8 @@
     <div class="modal" id="uploadModal">
         <div class="modal-content">
             <h2 style="margin-bottom: 20px;">Upload Video</h2>
-            <input type="text" id="upTitle" placeholder="Video Title">
-            <textarea id="upDesc" placeholder="Description"></textarea>
+            <input type="text" id="upTitle" placeholder="Video Title (Max 100)" maxlength="100">
+            <textarea id="upDesc" placeholder="Description" maxlength="5000"></textarea>
             <input type="file" id="upFile" accept="video/*">
             <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
             <button id="uploadBtn" onclick="handleUpload()">Upload to Cloud</button>
@@ -84,11 +84,11 @@
     </div>
 
     <script>
-        // FIXED: Automatically uses the live cloud URL or local URL
         const API_URL = window.location.origin + '/api';
         let accessToken = localStorage.getItem('vaultrix_access');
         let isRegisterMode = false;
         let currentView = 'feed';
+        let videojsPlayer = null;
 
         if (accessToken) document.getElementById('authBtn').innerText = 'Logout';
 
@@ -150,58 +150,42 @@
             } catch (e) { main.innerHTML = `<h2>Error: ${e.message}</h2>`; }
         }
 
-        // SMART FEATURE: Silent Background Updater
-        setInterval(async () => {
-            if (currentView === 'feed') {
-                try {
-                    const res = await apiCall('/v1/feed?limit=50', 'GET');
-                    const grid = document.getElementById('feedGrid');
-                    if (grid && res.videos.length > 0) {
-                        grid.innerHTML = '';
-                        res.videos.forEach(v => {
-                            grid.innerHTML += `
-                                <div class="video-card" onclick="watchVideo('${v.id}')">
-                                    <img src="${v.thumbnail_url}" class="thumbnail">
-                                    <div class="video-info">
-                                        <div class="avatar">V</div>
-                                        <div><h3>${sanitize(v.title)}</h3><p>${v.views} views</p></div>
-                                    </div>
-                                </div>`;
-                        });
-                    }
-                } catch (e) { console.error("Background update failed", e); }
-            }
-        }, 30000);
-
         async function watchVideo(id) {
             currentView = 'watch';
             const main = document.getElementById('mainContent');
-            main.innerHTML = `Loading...`;
+            main.innerHTML = `Loading video...`;
             try {
                 const v = await apiCall(`/v1/videos/${id}`, 'GET');
                 main.innerHTML = `
                     <div class="watch-container"><div class="player-section">
                         <button class="back-btn" onclick="loadFeed()">← Back</button>
-                        <video id="player" class="video-player" controls autoplay></video>
+                        <video id="player" class="video-js vjs-big-play-centered vjs-fluid" controls preload="auto" playsinline></video>
                         <div class="watch-info">
                             <h1>${sanitize(v.title)}</h1>
                             <div class="watch-meta">
                                 <span>${v.views} views</span>
-                                <div class="actions"><button>👍 ${v.likes}</button><button>👎 ${v.dislikes}</button></div>
+                                <div class="actions">
+                                    <button id="likeBtn" onclick="toggleLike('${id}', 'like')">👍 ${v.likes}</button>
+                                    <button id="dislikeBtn" onclick="toggleLike('${id}', 'dislike')">👎 ${v.dislikes}</button>
+                                </div>
                             </div>
                             <p style="margin-top: 15px; color: #ccc;">${sanitize(v.description) || "No description"}</p>
                         </div>
                         <div class="comments-section">
-                            <h3>${v.comment_count} Comments</h3>
-                            <div class="comment-input"><div class="avatar">U</div><input type="text" id="commentInput" placeholder="Add a comment..."><button onclick="postComment('${id}')">COMMENT</button></div>
+                            <h3 id="commentCount">${v.comment_count} Comments</h3>
+                            <div class="comment-input">
+                                <input type="text" id="commentInput" placeholder="Add a comment (Max 500)..." maxlength="500">
+                                <button onclick="postComment('${id}')" style="width: 100px; align-self: flex-end;">COMMENT</button>
+                            </div>
                             <div id="commentsList"></div>
                         </div>
                     </div></div>`;
                 
-                const video = document.getElementById('player');
-                const hls = new Hls();
-                hls.loadSource(v.hls_url); hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+                if (videojsPlayer) videojsPlayer.dispose();
+                videojsPlayer = videojs('player', { html5: { vhs: { overrideNative: true } } });
+                videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
+                videojsPlayer.hlsQualitySelector();
+                videojsPlayer.play();
                 
                 loadComments(id);
             } catch (e) { main.innerHTML = `<h2>Failed: ${e.message}</h2>`; }
@@ -225,6 +209,18 @@
             try {
                 await apiCall(`/v1/videos/${id}/comments`, 'POST', { text: input.value });
                 input.value = ''; loadComments(id);
+                const h3 = document.getElementById('commentCount');
+                let count = parseInt(h3.innerText.split(' ')[0]) || 0;
+                h3.innerText = `${count + 1} Comments`;
+            } catch (e) { alert(e.message); }
+        }
+
+        async function toggleLike(id, type) {
+            if (!accessToken) return alert('Login to like');
+            try {
+                const res = await apiCall(`/v1/videos/${id}/like`, 'POST', { type });
+                document.getElementById('likeBtn').innerText = `👍 ${res.likes}`;
+                document.getElementById('dislikeBtn').innerText = `👎 ${res.dislikes}`;
             } catch (e) { alert(e.message); }
         }
 
@@ -233,7 +229,6 @@
             document.getElementById('uploadModal').style.display = 'flex';
         }
 
-        // THE "NEVER FAIL" RETRY SYSTEM
         async function fetchWithRetry(url, options, retries = 3) {
             try {
                 const res = await fetch(url, options);
@@ -244,7 +239,6 @@
                 return res;
             } catch (error) {
                 if (retries > 0) {
-                    console.log(`Network drop detected. Retrying in 2s... (${retries} attempts left)`);
                     await new Promise(r => setTimeout(r, 2000));
                     return fetchWithRetry(url, options, retries - 1);
                 }
@@ -258,36 +252,28 @@
             const file = document.getElementById('upFile').files[0];
             if (!title || !file) return alert('Title and file required');
 
-            const progressBar = document.getElementById('progressFill');
             const uploadBtn = document.getElementById('uploadBtn');
             uploadBtn.innerText = "Uploading to Cloud..."; uploadBtn.disabled = true;
 
             try {
-                // 1. Get Signature from Backend (With Auto-Retry)
                 const signRes = await fetchWithRetry(`${API_URL}/upload/init`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }
                 }).then(r => r.json());
                 
-                // 2. Upload Directly to Cloudinary (With Auto-Retry)
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('api_key', signRes.apiKey);
                 formData.append('timestamp', signRes.timestamp);
                 formData.append('signature', signRes.signature);
 
-                const cloudRes = await fetchWithRetry(`https://api.cloudinary.com/v1_1/${signRes.cloudName}/video/upload`, {
-                    method: 'POST', body: formData
-                });
+                const cloudRes = await fetchWithRetry(`https://api.cloudinary.com/v1_1/${signRes.cloudName}/video/upload`, { method: 'POST', body: formData });
                 const cloudData = await cloudRes.json();
                 
                 if (cloudData.error) throw new Error(cloudData.error.message);
                 if (!cloudData.public_id) throw new Error("Cloudinary did not return a video ID.");
                 
-                // 3. Tell Backend to save it to Supabase (With Auto-Retry)
                 await fetchWithRetry(`${API_URL}/upload/complete`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
                     body: JSON.stringify({ cloudinaryId: cloudData.public_id, title, description: desc })
                 });
                 
@@ -296,10 +282,9 @@
                 document.getElementById('upTitle').value = '';
                 document.getElementById('upDesc').value = '';
                 document.getElementById('upFile').value = '';
-                progressBar.style.width = '0%';
                 loadFeed();
             } catch (e) {
-                alert('Upload failed after multiple retries: ' + e.message);
+                alert('Upload failed: ' + e.message);
             } finally {
                 uploadBtn.innerText = "Upload to Cloud"; uploadBtn.disabled = false;
             }
