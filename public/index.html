@@ -46,8 +46,6 @@
         .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
         .back-btn { background: transparent; border: 1px solid #333; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; margin-bottom: 15px; display: inline-block; }
         .switch-text { color: var(--subtext); text-align: center; margin-top: 15px; cursor: pointer; text-decoration: underline; }
-        
-        /* YouTube Style Loading Spinner */
         .vjs-loading-spinner { border-color: var(--accent); }
     </style>
 </head>
@@ -92,6 +90,7 @@
         let isRegisterMode = false;
         let currentView = 'feed';
         let videojsPlayer = null;
+        const videoCache = new Map(); // HOVER PRELOAD CACHE
 
         if (accessToken) document.getElementById('authBtn').innerText = 'Logout';
 
@@ -142,7 +141,7 @@
                 if (res.videos.length === 0) { grid.innerHTML = '<h2>No videos yet.</h2>'; return; }
                 res.videos.forEach(v => {
                     grid.innerHTML += `
-                        <div class="video-card" onclick="watchVideo('${v.id}')">
+                        <div class="video-card" onmouseover="preloadVideo('${v.id}')" onclick="watchVideo('${v.id}')">
                             <img src="${v.thumbnail_url}" class="thumbnail">
                             <div class="video-info">
                                 <div class="avatar">V</div>
@@ -153,12 +152,24 @@
             } catch (e) { main.innerHTML = `<h2>Error: ${e.message}</h2>`; }
         }
 
+        // YOUTUBE SECRET: Hover Preload. Fetches video data before user even clicks.
+        async function preloadVideo(id) {
+            if (videoCache.has(id)) return;
+            try {
+                const res = await apiCall(`/v1/videos/${id}`, 'GET');
+                videoCache.set(id, res);
+            } catch (e) {}
+        }
+
         async function watchVideo(id) {
             currentView = 'watch';
             const main = document.getElementById('mainContent');
             main.innerHTML = `Loading video...`;
             try {
-                const v = await apiCall(`/v1/videos/${id}`, 'GET');
+                // Use cached data if available for instant load, otherwise fetch
+                const v = videoCache.has(id) ? videoCache.get(id) : await apiCall(`/v1/videos/${id}`, 'GET');
+                videoCache.delete(id); // clear memory
+                
                 main.innerHTML = `
                     <div class="watch-container"><div class="player-section">
                         <button class="back-btn" onclick="loadFeed()">← Back</button>
@@ -186,23 +197,19 @@
                 
                 if (videojsPlayer) videojsPlayer.dispose();
                 
-                // PROFESSIONAL DEEP BUFFER ENGINE (YouTube Architecture)
+                // HYPER-FAST INSTANT PLAY ENGINE
                 videojsPlayer = videojs('player', {
                     html5: {
                         vhs: {
                             overrideNative: true,
-                            enableLowInitialPlaylist: true, // Starts on 240p instantly
-                            maxPlaylistRetries: 5,
-                            // THE DEEP BUFFER FIX: Aggressively downloads 5 minutes (300s) ahead.
-                            // Prevents buffering even if Wi-Fi drops for 5 minutes.
-                            bufferLowWaterLine: 30,       // 30 seconds before it starts fetching
-                            bufferHighWaterLine: 300,     // Fetches 5 minutes ahead constantly
+                            // Removed enableLowInitialPlaylist to force direct first chunk fetch
+                            maxPlaylistRetries: 3,
                             cacheEncryptionKeys: true
                         }
                     },
                     preload: 'auto',
                     fluid: true,
-                    playbackRates: [0.5, 1, 1.25, 1.5, 2] // YouTube Speed Controls
+                    playbackRates: [0.5, 1, 1.25, 1.5, 2]
                 });
                 
                 videojsPlayer.src({ src: v.hls_url, type: 'application/x-mpegURL' });
